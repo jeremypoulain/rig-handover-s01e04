@@ -58,20 +58,43 @@ function toRow(job: string, lines: RunLine[]): DigestRow {
   };
 }
 
-export const readNight: ReadNight = (runsDir, night) => {
+// Read and parse a night file. Null when the file is missing.
+function readLines(runsDir: string, night: string): { lines: RunLine[]; badLines: number } | null {
   const file = join(runsDir, `${night}.jsonl`);
   if (!existsSync(file)) return null;
   const text = readFileSync(file, 'utf8');
-
-  const byJob = new Map<string, RunLine[]>();
+  const lines: RunLine[] = [];
   let badLines = 0;
   for (const line of text.split(/\r?\n/)) {
     if (line.trim() === '') continue;
     const parsed = parseLine(line);
-    if (parsed === null) {
-      badLines++;
-      continue;
-    }
+    if (parsed === null) badLines++;
+    else lines.push(parsed);
+  }
+  return { lines, badLines };
+}
+
+export type NightCounts = Record<RunStatus, number>;
+
+// Log lines per status for one night (not runs/retries per job). Null when the night is missing or unreadable.
+export function countNight(runsDir: string, night: string): NightCounts | null {
+  try {
+    const read = readLines(runsDir, night);
+    if (read === null) return null;
+    const counts: NightCounts = { ok: 0, retry: 0, fail: 0 };
+    for (const l of read.lines) counts[l.status]++;
+    return counts;
+  } catch {
+    return null;
+  }
+}
+
+export const readNight: ReadNight = (runsDir, night) => {
+  const read = readLines(runsDir, night);
+  if (read === null) return null;
+
+  const byJob = new Map<string, RunLine[]>();
+  for (const parsed of read.lines) {
     const list = byJob.get(parsed.job);
     if (list) list.push(parsed);
     else byJob.set(parsed.job, [parsed]);
@@ -80,6 +103,6 @@ export const readNight: ReadNight = (runsDir, night) => {
   const rows = [...byJob.entries()]
     .map(([job, lines]) => toRow(job, lines))
     .sort((a, b) => (a.job < b.job ? -1 : a.job > b.job ? 1 : 0));
-  const digest: NightDigest = { night, rows, badLines };
+  const digest: NightDigest = { night, rows, badLines: read.badLines };
   return digest;
 };
